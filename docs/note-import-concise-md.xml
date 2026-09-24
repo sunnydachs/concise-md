@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0"
+  xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:wp="http://wordpress.org/export/1.2/">
+<channel>
+  <title>note</title>
+  <link>https://note.com</link>
+  <description></description>
+  <item>
+    <title>AIの長文回答を3秒で「結論・コード・検証」に整形するCLIを作った</title>
+    <pubDate>Fri, 25 Sep 2026 09:00:00 +0000</pubDate>
+    <dc:creator><![CDATA[sunnydachs]]></dc:creator>
+    <guid isPermaLink="false">note-concise-md-001</guid>
+    <content:encoded><![CDATA[
+<p>AIに質問すると、答えは返ってくる。ただし読むのがしんどい。</p>
+<p>「PythonのCSV重複除去」を聞いたら、BOMの話、エンコーディングの話、pandasの設計思想まで含めた800字が返ってきた。</p>
+<p>必要なのは12行のコードと、動くか確認する一行なのに。</p>
+<p>「もっと簡潔に」と事前に指示しても効かないことがある。「tldr pls」と打ち返せば、また1回待つ。</p>
+<p>そこで、<b>生成後の文章に後から通す</b>CLIを作りました。</p>
+<p>→ リポジトリ: <a href="https://github.com/sunnydachs/concise-md">github.com/sunnydachs/concise-md</a></p>
+<p>markdownのAI回答を読み込むと、「結論」「最小コード」「検証方法」の3セクションだけを出します。</p>
+<p>stdinにも対応しているので、パイプで繋ぐだけ。</p>
+<pre><code>$ concise answer.md
+## 結論
+
+- The standard approach is exponential backoff with jitter:
+
+## 最小コード
+
+RETRYABLE = {429, 502, 503, 504}
+
+def get_with_retry(url, **kwargs):
+    for attempt in range(4):
+        try:
+            r = requests.get(url, timeout=30, **kwargs)
+        except requests.RequestException:
+            time.sleep(2 ** attempt)
+            continue
+        if r.status_code not in RETRYABLE:
+            return r
+    raise RuntimeError("gave up")
+
+## 検証方法
+
+- Test it with a mock that returns 429 three times and then 200.</code></pre>
+<p>外部依存ゼロ。Python 3.11以降があれば動く。LLMも呼ばない。</p>
+<p>処理は0.02秒。</p>
+<h2>なぜLLMで要約しないのか</h2>
+<p>最初はLLMで要約する版も作って試した。</p>
+<p>日本語の長文を入れたところ、要約自体は綺麗なのに、<b>コードが壊れていた</b>。</p>
+<p>重複除去のコードで、除去済みのDataFrameに向かって、もう一度同じ計算をする行を、LLMが「整理」の名目で生成していた。</p>
+<p>実行すると「removed 0 rows」。</p>
+<p>学習目的のコードとしては致命的です。</p>
+<p>文章の要約はLLMの得意領域。でもコードは触らない、と方針を固めた。</p>
+<p>ルールベースの解析なら、コードブロックを一字一句そのまま出せることが保証できる。</p>
+<p>AI回答を「学習素材」として残すなら、この保証が要る。</p>
+<h2>どういうルールで整形しているか</h2>
+<p>やっていることは素朴なmarkdown解析です。</p>
+<p>見出し単位に分割し、コードブロックを本文から切り離す。本文は段落ごとに結合して、文単位に分解。</p>
+<p>「結論」は、tl;dr や「まとめ」「In short」といった目印の語を含む文を探す。見つからなければ最初の段落の冒頭文。</p>
+<p>コードは3ブロックまで、各25行まで。冒頭に DON'T と書かれたアンチパターン例は、本命のコードより後に回す。</p>
+<p>検証方法は「Verification」「検証方法」の見出しがあればその中身を、なければ verify や「確認」を含む文を本文から拾う。</p>
+<p>最後に、本文が10行未満でコードが1個以内なら、そのまま返して終わる。短いものを無理に整形する意味がない。</p>
+<p>このへんの判断は全部テストに書いてある。12個が全部通ることを、CI(3.11〜3.13)で毎回確認している。</p>
+<h2>正直な限界</h2>
+<p>markdownの解析は正規表現の寄せ集めで、CommonMarkの完全実装ではない。</p>
+<p>テーブルの行は本文として拾われるので、表が多い文章の結論が変になることがある。</p>
+<p>それと、このツールは見た目を短くするだけで、内容の正誤は判断しない。</p>
+<p>元の回答が間違っていれば、短く整形された間違いが出てくる。学習用途では、整形後のコードを必ず自分の手で実行してください。</p>
+<h2>実測</h2>
+<p>手元のAI回答サンプルで試した範囲では、英語の長文(88行)が46行に、日本語(57行)が26行になった。どちらも0.02秒。</p>
+<p>要点だけの回答に通しても何も起きない(そのまま返る)。これは仕様。</p>
+<h2>おわりに</h2>
+<p>AIを学習に使うとき、自分は「読む速度」で損をしていた気がする。このCLIで、読み返す時間を削る一本道ができたかな、という感触。</p>
+<p>個人のOSSです。動作保証はないものとして、壊れたらissueをください。</p>
+<p>→ <a href="https://github.com/sunnydachs/concise-md">github.com/sunnydachs/concise-md</a></p>
+]]></content:encoded>
+    <wp:post_type><![CDATA[post]]></wp:post_type>
+    <wp:status><![CDATA[publish]]></wp:status>
+  </item>
+</channel>
+</rss>
